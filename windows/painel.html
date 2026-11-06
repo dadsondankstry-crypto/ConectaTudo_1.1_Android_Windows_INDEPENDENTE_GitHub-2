@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ConectaTudo 1.1 • Painel local</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{font:16px system-ui,Segoe UI,Arial,sans-serif;background:#101626;color:#e9efff;margin:0}main{max-width:850px;margin:auto;padding:18px}header{padding:10px 0 18px}h1{color:#78b7ff;margin:0;font-size:1.7rem}h2{font-size:1.12rem;color:#9fcbff}p,small{color:#aabbd4;line-height:1.5}.box{background:#1b263c;border:1px solid #35445e;border-radius:16px;padding:18px;margin:12px 0}button,.action{background:#347de2;color:white;border:0;border-radius:10px;padding:11px 16px;cursor:pointer;font-weight:600;display:inline-block;text-decoration:none;margin:4px 2px}button:hover{background:#2363bf}button:disabled{opacity:.55}input,textarea{background:#0f192a;border:1px solid #425373;border-radius:9px;padding:12px;color:#fff;width:100%;font:inherit}textarea{min-height:88px}ul{padding:0;list-style:none}li{padding:9px;margin:6px 0;background:#111d30;border-radius:7px;overflow-wrap:anywhere}.row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.row>*{flex:1;min-width:130px}.hidden{display:none!important}#screenImg{max-width:100%;width:100%;background:#05080f;border-radius:10px;min-height:150px;object-fit:contain}#status{padding:9px 12px;background:#173653;border-radius:9px}progress{width:100%;height:19px}.red{color:#ff9696}.green{color:#79dda4}.detail{font-weight:600;color:#82c7ff;white-space:pre-wrap}.pill{display:inline-block;padding:3px 9px;border-radius:22px;background:#254c62;color:#a2e4d2}
+</style></head><body><main><header><h1>🔗 ConectaTudo <small class="pill">1.1</small></h1><p>Conexão direta pela rede Wi-Fi local ou hotspot • Sem nuvem</p><div id="status">Verificando acesso...</div></header>
+<section class="box" id="screenBox"><h2>🖥️ Tela do dispositivo</h2><p id="screenInfo">Aguardando compartilhamento...</p><img id="screenImg" alt="Tela compartilhada"/><div class="row"><button id="fullscreen">⛶ Tela cheia</button><button id="showAll">Abrir painel de arquivos</button></div><small>Compartilhamento exige autorização no aparelho que transmite. A qualidade é otimizada para leitura, não para jogos em alta taxa de quadros.</small></section>
+<section class="box" id="sendBox"><h2>📤 Enviar arquivos para este dispositivo</h2><p>Escolha os arquivos. O receptor salva na pasta ConectaTudo.</p><input type="file" id="files" multiple/><div class="row"><button id="sendFiles">Enviar arquivos</button><button id="cancelUpload" class="hidden">Cancelar envio</button></div><progress value="0" max="100" id="progress" class="hidden"></progress><p id="sent" class="detail" aria-live="polite"></p></section>
+<section class="box" id="msgBox"><h2>💬 Conversa • Atualização automática</h2><ul id="messages"></ul><textarea id="msg" maxlength="65000" placeholder="Mensagem para este dispositivo..."></textarea><button id="sendMessage">Enviar texto</button></section>
+<section class="box" id="receivedBox"><h2>📥 Arquivos recebidos</h2><p id="recvProgress" class="detail"></p><ul id="received"></ul></section>
+<p><small>🔒 Segurança: rede local HTTP com PIN (sem criptografia). Utilize apenas hotspot/rede confiável. Não encaminhe a porta 8765 para a internet. Compartilhamento remoto pela internet e controle remoto não fazem parte da 1.1.</small></p>
+</main><script>
+(()=>{'use strict';
+const $=id=>document.getElementById(id),pin=new URL(location.href).searchParams.get('pin')||'',isScreen=location.pathname==='/screen';
+const query=p=>'pin='+encodeURIComponent(pin)+(p?'&'+p:'');
+const size=n=>n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':n<1073741824?(n/1048576).toFixed(1)+' MB':(n/1073741824).toFixed(2)+' GB';
+let canView=false,frameLoopActive=false,currentUpload=null,refreshRunning=false;
+const tell=(message,bad=false)=>{$('status').textContent=message;$('status').className=bad?'red':'green';};
+const api=async(path,opts)=>{const url=path+(path.includes('?')?'&':'?')+query('');const r=await fetch(url,{...opts,cache:'no-store'});if(!r.ok){const error=await r.text();throw Error('HTTP '+r.status+': '+error.slice(0,150));}return r.json();};
+async function initialize(){
+ if(!pin){tell('PIN ausente. Abra pelo aplicativo, ou acrescente ?pin=SEUCODIGO no endereço.',true);return;}
+ $('screenBox').classList.toggle('hidden',!isScreen);
+ if(isScreen){$('sendBox').classList.add('hidden');$('msgBox').classList.add('hidden');$('receivedBox').classList.add('hidden');}
+ refresh();
+}
+function loadFrame(){
+ if(!canView || !isScreen || document.hidden){frameLoopActive=false;return;}
+ frameLoopActive=true;
+ $('screenImg').src='/api/screen.jpg?'+query('t='+Date.now());
+}
+$('screenImg').addEventListener('load',()=>{if(canView)setTimeout(loadFrame,290);else frameLoopActive=false;});
+$('screenImg').addEventListener('error',()=>{if(canView)setTimeout(loadFrame,1450);else frameLoopActive=false;});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&isScreen&&canView&&!frameLoopActive)loadFrame();});
+async function refresh(){
+ if(refreshRunning)return;refreshRunning=true;
+ try{
+  if(isScreen){
+   const info=await api('/api/info');
+   canView=Boolean(info.screen);
+   tell('✅ '+info.name+' • '+(canView?'Compartilhando tela':'Aguardando compartilhamento'));
+   $('screenInfo').textContent=canView?'Imagem atualizada automaticamente • modo leitura de tela':'No dispositivo emissor, ative Compartilhar minha tela.';
+   if(canView&&!frameLoopActive&&!document.hidden)loadFrame();
+  }else{
+   const [info,mm,ff,tt]=await Promise.all([api('/api/info'),api('/api/messages'),api('/api/files'),api('/api/transfers').catch(()=>({transfers:[]}))]);
+   if(!$('status').textContent.startsWith('❌'))tell('✅ '+info.name+' • Conectado • Mensagens atualizadas automaticamente');
+   const list=$('messages');const oldTop=list.scrollTop;
+   const rows=(mm.messages||[]).map(m=>{const el=document.createElement('li');el.textContent=new Date(m.time).toLocaleTimeString('pt-BR')+' • '+m.who+': '+m.text;return el;});
+   list.replaceChildren(...rows);list.scrollTop=oldTop;
+   $('received').replaceChildren(...(ff.files||[]).map(f=>{const el=document.createElement('li');const a=document.createElement('a');a.href='/api/download?'+query('name='+encodeURIComponent(f.name));a.textContent='⬇ '+f.name+' ('+size(Number(f.size)||0)+')';a.style.color='#86baff';el.appendChild(a);return el;}));
+   const t=(tt.transfers||[]).find(v=>v.status==='receiving');
+   $('recvProgress').textContent=t?'📥 Recebendo '+t.name+' • '+size(t.done)+' / '+size(t.size)+' • '+Math.round(t.done/Math.max(1,t.size)*100)+'%':'';
+  }
+ }catch(e){tell('⚠️ Conexão temporariamente indisponível: '+e.message,true);}
+ finally{refreshRunning=false;setTimeout(refresh,1250);}
+}
+$('fullscreen').onclick=()=>$('screenImg').requestFullscreen?.();
+$('showAll').onclick=()=>location.href='/?'+query('');
+$('sendMessage').onclick=async()=>{const text=$('msg').value.trim();if(!text)return;try{await api('/api/message',{method:'POST',body:text,headers:{'Content-Type':'text/plain;charset=UTF-8'}});$('msg').value='';tell('✅ Mensagem enviada.');}catch(e){tell('❌ Mensagem não enviada: '+e.message,true);}};
+function uploadOne(file,index,total,base,overall){return new Promise((resolve,reject)=>{
+ const xhr=new XMLHttpRequest();currentUpload=xhr;
+ const started=performance.now();
+ xhr.open('POST','/api/send?'+query('name='+encodeURIComponent(file.name)));
+ xhr.setRequestHeader('Content-Type','application/octet-stream');
+ xhr.upload.onprogress=e=>{
+  if(!e.lengthComputable)return;
+  const done=base+e.loaded, sec=Math.max(.1,(performance.now()-started)/1000),speed=e.loaded/sec;
+  $('progress').value=overall>0?Math.min(100,Math.round(100*done/overall)):0;
+  $('sent').textContent='📤 Enviando '+index+'/'+total+': '+file.name+'\n'+size(e.loaded)+' / '+size(e.total)+' • '+Math.round(e.loaded/Math.max(1,e.total)*100)+'% • '+size(Math.round(speed))+'/s'+(speed>0?' • '+Math.ceil((e.total-e.loaded)/speed)+' s restantes':'');
+ };
+ xhr.onload=()=>{currentUpload=null;if(xhr.status>=200&&xhr.status<300)resolve();else reject(Error('HTTP '+xhr.status+': '+xhr.responseText.slice(0,150)));};
+ xhr.onerror=()=>{currentUpload=null;reject(Error('Falha de rede. Verifique Wi-Fi e hotspot.'));};
+ xhr.onabort=()=>{currentUpload=null;reject(Error('Transferência cancelada'));};
+ xhr.send(file);
+ });}
+$('sendFiles').onclick=async()=>{
+ const files=Array.from($('files').files);if(!files.length)return;
+ const totalBytes=files.reduce((s,f)=>s+f.size,0);let sent=0;
+ $('progress').classList.remove('hidden');$('progress').value=0;
+ $('sendFiles').disabled=true;$('cancelUpload').classList.remove('hidden');
+ try{for(let i=0;i<files.length;i++){const file=files[i];await uploadOne(file,i+1,files.length,sent,totalBytes);sent+=file.size;$('progress').value=totalBytes>0?Math.round(100*sent/totalBytes):100;}
+  $('sent').textContent='✅ '+files.length+' arquivo(s) enviado(s) • '+size(sent)+' no total';tell('✅ Transferência concluída');$('files').value='';
+ }catch(e){$('sent').textContent='❌ '+e.message;tell('❌ Erro na transferência: '+e.message,true);}
+ finally{$('sendFiles').disabled=false;$('cancelUpload').classList.add('hidden');currentUpload=null;}
+};
+$('cancelUpload').onclick=()=>currentUpload?.abort();
+initialize();
+})();
+</script></body></html>
